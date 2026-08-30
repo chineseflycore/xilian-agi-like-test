@@ -1,0 +1,50 @@
+# ===== 运行时 / 隐私类（绝不提交）=====
+logs/
+knowledge/
+memory_pools/
+data_cache/
+uploads/
+captures/
+*.log
+*.jsonl
+
+# ===== 模型权重 / 大文件（不进仓库）=====
+models/
+Python/
+vendor/
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.npz
+*.onnx
+*.gguf
+
+# ===== 缓存目录 =====
+__pycache__/
+*.pyc
+.hfcache/
+.mscache/
+.xdgcache/
+.cache/
+
+# ===== 密钥 / 环境 =====
+.env
+.env.*
+*.ini.bak
+*_key.*
+secrets.*
+secrets/
+
+# ===== 开发备份 =====
+backup_pre_v73*/
+*.bak
+*.tmp
+*.swp
+
+# ===== 系统文件 =====
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+.pytest_cache/

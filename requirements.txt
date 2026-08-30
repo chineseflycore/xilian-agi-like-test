@@ -1,0 +1,23 @@
+# ============================================================
+# 昔涟AGI v7.3 依赖声明
+# GTX 1060 6GB 目标环境: torch 2.x + cu126（已随包安装于 ./Python）
+# 本机无需安装 —— ./Python 为完整便携环境（torch/transformers 就绪）
+# ============================================================
+
+# ---- 核心推理（4-bit NF4 主路径,【硬性】）----
+torch>=2.5.0                # CUDA 版本按驱动选择（1060 可用 cu126）
+transformers>=4.50.0        # 可选 Qwen 桥（XILIAN_LLM=1）加载
+bitsandbytes>=0.43.0        # 【硬性】4-bit NF4（缺失时 Qwen 桥降级 FP16 并告警;
+                            #        匹配器/回环/路由使用内置同码本打包量化, 不受影响）
+accelerate>=0.30.0          # device_map 显存锁定（Qwen 桥用）
+
+# ---- 数值（显存张量运算 / CSR 稀疏扩散器）----
+numpy>=1.24
+scipy>=1.10
+
+# ---- GUI（标准库 tkinter 随 Python 发行；少数发行版需单独安装）----
+# python -m pip install tk    # 仅当 import tkinter 失败时
+
+# ---- 可选工具 ----
+# safetensors 随 transformers 自动安装
+# huggingface_hub 用于在线拉取 Qwen 模型（models/qwen_encoder、qwen_decoder）
