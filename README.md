@@ -11,6 +11,8 @@
 本项目是一个面向 **GTX 1060 6GB / 16GB RAM** 的低资源人格引擎实验：
 以「昔涟」为人格内核，通过 **4000 路匹配器集群 + 动态激活 + 记忆池 + 扩散器** 实现轻量级对话与认知连续性，并支持 **Cyrene-Agent 兼容 API**（OpenAI 格式 `/v1/chat/completions`）。
 
+> **v8.0 核心**：接入 **MiniMind-O 前端编码器**（Thinker 768 维潜向量 Z）+ **轻量投影层**（置信度回退），将 Z 维度从 384 对齐到 768，并与 `core/projector.py`、`model_minimind.py`、`minimind_bridge.py` 联动。
+
 - 代码：`core/`（认知核心）、`gui/`（聊天界面）、`scripts/`（启动/训练入口）
 - 配置：`config.py`（全局常量）、`hoyotool.ini`（示例配置，密钥留空）
 - 依赖：见 `requirements.txt`
@@ -46,6 +48,9 @@ xilian-agi-like-test/
 │   ├── matcher_cluster.py
 │   ├── memory_pool.py
 │   ├── diffuser.py
+│   ├── projector.py      # v8.0 轻量投影层 + 置信度回退
+│   ├── model_minimind.py # v8.0 MiniMind Thinker（hidden=768）
+│   ├── minimind_bridge.py# v8.0 MiniMind-O 编码桥（Thinker hidden → 768 Z）
 │   └── adapter/          # OpenAI 兼容 API / SSE
 ├── gui/                  # 聊天窗口 / Web UI
 ├── scripts/              # 启动 / 训练入口
@@ -123,7 +128,8 @@ python train_finetune_qwen.py
 | 变量 | 说明 |
 |---|---|
 | `DEEPSEEK_API_KEY` | DeepSeek API Key（训练数据生成 / 云端路由） |
-| `XILIAN_LLM` | 本地 Qwen 桥开关（默认 1，可选 0） |
+| `XILIAN_ENCODER` | 输入编码后端（默认 `minimind_o`，可选 `qwen`=v7.3 旧桥 / `rule`=规则编码） |
+| `XILIAN_LLM` | 本地 LLM 桥开关（默认 1，可选 0） |
 | `XILIAN_DECODER` | 解码器规模（`8b` / `2b`） |
 | `PHILIA_DEMO` | 全流程演示模式（纯 CPU 验证） |
 | `PHILIA_L3_SCALE` | L3 扩散器规模缩放（低内存机） |
