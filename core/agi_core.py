@@ -40,6 +40,14 @@ from core.diffuser import Diffuser
 from core.memory_pool import MemoryPool
 
 try:
+    from core.projector import Projector, build_default_projector
+    _HAS_PROJECTOR = True
+except Exception:            # pragma: no cover
+    Projector = None
+    build_default_projector = None
+    _HAS_PROJECTOR = False
+
+try:
     import torch
     _HAS_TORCH = True
 except Exception:            # pragma: no cover
@@ -197,7 +205,7 @@ class AGICore:
         self.log = self.cfg.setup_logging().getChild("core")
         self.api_mode = bool(api_mode)
 
-        self.log.info("════════ 昔涟AGI v7.3 启动 (%s 模式) ════════",
+        self.log.info("════════ 昔涟AGI v8.0 启动 (%s 模式) ════════",
                       "API" if self.api_mode else "本地")
         t0 = time.time()
 
@@ -206,6 +214,8 @@ class AGICore:
         self._encoder = None          # 可选 Qwen 编码器（惰性）
         self._encoder_source = "rule"
         self._bridge_status = {"encoder": 0, "decoder": 0}   # 加载失败计数(防重载风暴)
+        # ---- 投影层（Z 向量 → MiniMind Thinker 语义空间; 惰性构建, 见 _project_z） ----
+        self._projector = None
 
         # ---- 记忆池（先建; 启动载入用快速规则编码, 用户输入由 Qwen 桥实时编码） ----
         self.memory = MemoryPool(self.cfg,
@@ -260,9 +270,9 @@ class AGICore:
     # 编码 / 解码（规则主路径; Qwen 可选桥）
     # ==================================================================
     def _encode_text(self, text: str) -> np.ndarray:
-        """文本 → 384 维 Z。
+        """文本 → Z 向量（v8.0: 768 维 MiniMind；v7.3: 384 维 Qwen）。
 
-        优先 Qwen 编码头（models/qwen_encoder/head.pt, 仅在 enable_llm 时尝试）;
+        优先编码桥（MiniMind-O 或 Qwen, 仅在 enable_llm 时尝试）;
         否则规则编码（协议软码投影）。
         """
         if (self.cfg.enable_llm and self._encoder is None
@@ -272,26 +282,84 @@ class AGICore:
                 self._bridge_status["encoder"] += 1      # 成功 +1（不再重载）
             except Exception as e:
                 self._bridge_status["encoder"] += 1
-                self.log.warning("[CORE] Qwen 编码器加载失败(%d/2): %s",
+                self.log.warning("[CORE] 编码器加载失败(%d/2): %s",
                                  self._bridge_status["encoder"], str(e)[:120])
         if self._encoder is not None:
             try:
                 z = self._encoder(text)
                 if z is not None and np.linalg.norm(z) > 1e-9:
-                    self._encoder_source = "qwen"
+                    # _encoder_source 已在 _try_load_encoder 里标记后端
                     return z / np.linalg.norm(z)
             except Exception:
                 self._encoder = None
         return _text_to_z(text, self.cfg)
 
-    def _try_load_encoder(self):
-        """加载 Qwen0.8B + 训练编码头（4-bit NF4; 失败返回 None 走规则路径）。
+    def _ensure_projector(self):
+        """惰性构建投影层（Z → MiniMind Thinker 语义空间）。失败返回 None 走直通。"""
+        if not _HAS_PROJECTOR:
+            return None
+        if self._projector is None:
+            try:
+                conf = getattr(self.cfg, "projector_conf", {})
+                enabled = bool(conf.get("enabled", True))
+                if not enabled:
+                    return None
+                self._projector = build_default_projector(self.cfg)
+                self._projector.to(self.cfg.device)
+                self._projector.eval()
+                self.log.info("[CORE] 投影层已构建: in=%d out=%d conf_th=%s",
+                              self._projector.in_dim, self._projector.out_dim,
+                              self._projector.confidence_threshold)
+            except Exception as e:
+                self.log.warning("[CORE] 投影层构建失败，走直通: %s", str(e)[:120])
+                self._projector = None
+        return self._projector
 
-        编码头 head.pt（scripts/train_encoder_head.py 用昔涟语料训练）:
-          {"version","project": [384, hidden], "mean": [hidden], ...}
-        → z = L2(project @ (mean_pool(hidden) - mean))
-        兼容旧键 {"weight": [384, hidden]}（无 mean, 直接投影）。
+    def _project_z(self, z: np.ndarray, apply_conf: bool = True):
+        """把规则路径 Z 投影到 MiniMind Thinker 语义空间。
+
+        输入 z 为 [z_dim] 或 [N, z_dim] 的 Z 向量。投影层不可用时原样返回。
+        apply_conf=True 时额外返回 (proj, conf, in_dist)；否则仅返回 proj。
+        置信度低于 threshold 时 in_dist=False，调用方应回退到纯规则模式。
         """
+        proj = self._ensure_projector()
+        if proj is None or z is None:
+            if apply_conf:
+                return z, 1.0, True
+            return z
+        try:
+            arr = np.asarray(z, dtype=np.float32).reshape(-1, self.cfg.z_dim)
+            single = arr.shape[0] == 1 and np.asarray(z).ndim == 1
+            # filter_callable 返回 (proj_np, conf, in_dist)
+            proj_np, conf, in_dist = proj.filter_callable(arr)
+            if single:
+                proj_np = proj_np.reshape(-1)
+                conf = float(conf)
+            if apply_conf:
+                return proj_np, float(conf), bool(in_dist)
+            return proj_np
+        except Exception as e:
+            self.log.warning("[CORE] 投影失败，走直通: %s", str(e)[:120])
+            if apply_conf:
+                return z, 1.0, True
+            return z
+
+    def _try_load_encoder(self):
+        """加载编码器（v8.0: MiniMind-O；v7.3: Qwen0.8B + head.pt）。
+
+        依据 cfg.encoding_backend 分派：
+          - "minimind_o"（v8.0 默认）：MiniMind Thinker 文本编码（768 维 Z）
+          - "qwen"（v7.3 回退）：Qwen0.8B + 训练编码头（384 维 Z）
+        失败返回 None 走规则路径。
+        """
+        backend = getattr(self.cfg, "encoding_backend", "minimind_o").lower()
+        if backend == "minimind_o":
+            from .minimind_bridge import build_encoder
+            self._encoder_source = "minimind_o"
+            return build_encoder(self.cfg)
+
+        # ---- v7.3 Qwen 桥（回退） ----
+        self._encoder_source = "qwen"
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer, \
             BitsAndBytesConfig

@@ -27,6 +27,8 @@ __pycache__/
 .mscache/
 .xdgcache/
 .cache/
+# Rust 工具链本地缓存（cargo registry / crate / index），误入项目目录需排除
+.cargo/
 
 # ===== 密钥 / 环境 =====
 .env
@@ -48,3 +50,6 @@ Desktop.ini
 .idea/
 .vscode/
 .pytest_cache/
+
+# Cyrene agent
+.cyrene/

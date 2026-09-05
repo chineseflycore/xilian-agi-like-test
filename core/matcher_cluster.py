@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-core/matcher_cluster.py — 匹配器集群 v7.3（双存储策略 + 动态激活）
+core/matcher_cluster.py — 匹配器集群 v8.0（双存储策略 + 动态激活）[Z_DIM=768]
 ==================================================================
 显存预估:
-  大版本（合并）常驻: q uint8 [4000, 57537] ≈ 230MB + scale fp32 [4000] 16KB
-  前向分块瞬态: 256 行 × 115073 fp16 ≈ 59MB（分块解量化, 峰值受控）→ 总 < 0.3GB
+  大版本（合并）常驻: q uint8 [4000, 106689] ≈ 427MB + scale fp32 [4000] 16KB
+  前向分块瞬态: 256 行 × 213377 fp16 ≈ 109MB（分块解量化, 峰值受控）→ 总 < 0.55GB
 
 【硬性】§一.3 双存储策略:
   硬盘存储两种格式:
@@ -63,9 +63,9 @@ except Exception:            # pragma: no cover - DEMO 无 torch 环境
 def _compute_layout(arch):
     """由层宽 arch 计算 (name, offset, size) 布局表。
 
-    arch = [384, 256, 64, 1] → w0,b0,w1,b1,w2,b2 依次拼接:
-      w0 [256,384] 98304 + b0 [256] 256 + w1 [64,256] 16384 + b1 [64] 64 +
-      w2 [1,64] 64 + b2 [1] 1 = 115,073
+    arch = [768, 256, 64, 1] → w0,b0,w1,b1,w2,b2 依次拼接:
+      w0 [256,768] 196608 + b0 [256] 256 + w1 [64,256] 16384 + b1 [64] 64 +
+      w2 [1,64] 64 + b2 [1] 1 = 213,377
     """
     layout = []
     off = 0
@@ -89,9 +89,9 @@ class MatcherCluster:
         self.lock = threading.RLock()
 
         self.count = self.cfg.matcher_count                # 4000
-        self.arch = list(self.cfg.matcher_arch)            # [384,256,64,1]
-        self.numel = self.cfg.matcher_total_params         # 115073
-        self.bytes = self.cfg.matcher_bytes                # 57537
+        self.arch = list(self.cfg.matcher_arch)            # [768,256,64,1]
+        self.numel = self.cfg.matcher_total_params         # 213377
+        self.bytes = self.cfg.matcher_bytes                # 106689
         self.layout = _compute_layout(self.arch)
         self.in_dim = self.arch[0]
 

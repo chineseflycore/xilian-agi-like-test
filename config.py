@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-config.py — 昔涟AGI v7.3 全局配置（唯一数据源）
+config.py — 昔涟AGI v8.0 全局配置（唯一数据源）
 ================================================
 内存预估: < 50MB RAM（仅常量与路径配置，无模型权重）。
 
-v7.3 核心: 双存储匹配器集群（4000 × 0.2M 标称）+ 动态激活 + 双启动版本
+v8.0 核心: 双存储匹配器集群（4000 × 0.2M 标称）+ MiniMind-O 前端编码器
+（Thinker 768 维）+ 轻量投影层 + 双启动版本
 （本地 GUI / API 服务器 [Cyrene-Agent 对接]）。
 
 本文件同时提供两种访问形态:
@@ -32,9 +33,9 @@ os.makedirs(os.path.join(BASE_DIR, ".hfcache"), exist_ok=True)
 # ======================================================================
 # §七 规格常量（命名与需求文档完全一致 —— 唯一事实来源）
 # ======================================================================
-Z_DIM = 384                       # 潜向量维度（编码器输出 / 匹配器输入）
+Z_DIM = 768                       # 潜向量维度（编码器输出 / 匹配器输入）；v8.0 对齐 MiniMind-O Thinker hidden=768
 MATCHER_COUNT = 4000              # 匹配器数量（已恢复 4000）
-MATCHER_PARAMS = 0.2e6            # 单匹配器标称参数量上限（实际 115,073 < 0.2M）
+MATCHER_PARAMS = 0.3e6            # 单匹配器标称参数量上限（v8.0 768维实际 213,377 < 0.3M）
 
 HOT_THRESHOLD = 50                # Hot 温度: >50 次/100心跳
 WARM_THRESHOLD = 10               # Warm 温度: 10~50 次/100心跳
@@ -75,11 +76,11 @@ DEEPSEEK_MODEL = "deepseek-v4-flash-vision-exp"           # 云端转接模型
 # ----------------------------------------------------------------------
 # 派生常量（由上述规格常量计算）
 # ----------------------------------------------------------------------
-MATCHER_ARCH = [Z_DIM, 256, 64, 1]          # Linear(384,256)→ReLU→Linear(256,64)→ReLU→Linear(64,1)
+MATCHER_ARCH = [Z_DIM, 256, 64, 1]          # Linear(768,256)→ReLU→Linear(256,64)→ReLU→Linear(64,1)
 MATCHER_LAYERS = len(MATCHER_ARCH) - 1      # 3 个线性层
 MATCHER_TOTAL_PARAMS = sum(
     MATCHER_ARCH[i + 1] * MATCHER_ARCH[i] + MATCHER_ARCH[i + 1]
-    for i in range(MATCHER_LAYERS))         # = 115,073（< 0.2M ✓）
+    for i in range(MATCHER_LAYERS))         # = 213,377（< 0.2M ✓；768 维）
 MATCHER_BYTES = (MATCHER_TOTAL_PARAMS + 1) // 2   # NF4 打包字节数（每字节 2 参数）
 
 HEARTBEAT_DECAY_WINDOW = 100                # 温度分级统计窗口（每 100 心跳重算）
@@ -196,6 +197,25 @@ class Config:
         self.qwen_encoder_dir = os.path.join(self.models_dir, "qwen_encoder")
         self.qwen_decoder_dir = os.path.join(self.models_dir, "qwen_decoder")
         self.legacy_qwen_dir = os.path.join(self.models_dir, "Qwen3.5-0.8B")
+        # v8.0 MiniMind-O 前端编码（Thinker 文本编码器）
+        self.minimind_o_dir = os.path.join(self.models_dir, "MiniMind-O-0.1B")
+        # 编码后端: "minimind_o"（v8.0 默认）/ "qwen"（v7.3 旧桥，保留可回退）
+        self.encoding_backend = _env("XILIAN_ENCODER", "minimind_o").lower()
+        # MiniMind-O Thinker 基座权重（llm_768.pth, hidden=768, 8 层 dense）
+        self.minimind_llm_768_path = os.path.join(self.minimind_o_dir, "llm_768.pth")
+        self.minimind_config_dir = os.path.join(self.minimind_o_dir, "config")
+        # 投影层（Z 向量 → MiniMind Thinker 语义空间）
+        self.projector_conf = {
+            "enabled": True,
+            "type": "mlp",              # mlp / linear
+            "hidden_layers": 2,
+            "hidden_dim": 256,          # 轻量 MLP 隐藏维
+            "confidence_threshold": 0.7,  # 低于该值回退文本模式
+        }
+        # Thinker 推理深度（API 模式 reasoning_effort 控制）
+        self.thinker_layers = 8
+        self.talker_layers = 4
+        self.minimind_hidden_dim = 768
 
         # ---- 设备与显存预算（【硬性】 GTX 1060 6GB, 峰值 < 4.5GB） ----
         self.mode = detect_mode()
@@ -238,8 +258,8 @@ class Config:
         self.loop_emotion_decay = 0.7        # 残差融合（情感不突变）
         self.emotion_drift_limit = 0.2       # 单步最大漂移
 
-        # ---- 路由（50M 级, [392→8192→6144→5]） ----
-        self.router_input_dim = self.z_dim + len(self.emotion_names)   # 392
+        # ---- 路由（50M 级, [776→8192→6144→5]） ----
+        self.router_input_dim = self.z_dim + len(self.emotion_names)   # 776
         self.router_arch = [self.router_input_dim, 8192, 6144, 5]
         self.router_seed = 0x7CA1
         self.router_decisions = ["direct", "diffuse", "emotion_modulate",
@@ -446,8 +466,8 @@ class Config:
     # ------------------------------------------------------------------
     def summarize(self) -> str:
         """启动摘要（日志横幅用）。"""
-        return (f"v7.3 matchers={self.matcher_count}×{self.matcher_total_params} "
-                f"Z={self.z_dim} loops={self.loop_count} "
+        return (f"v8.0 matchers={self.matcher_count}×{self.matcher_total_params} "
+                f"Z={self.z_dim} enc={self.encoding_backend} loops={self.loop_count} "
                 f"router={self.router_arch} mem={self.memory_max_count} "
                 f"device={self.device} budget={self.vram_budget_mb:.0f}MB "
                 f"LLM={'on' if self.enable_llm else 'off(去KV化)'}")

@@ -3,7 +3,7 @@
 core/memory_pool.py — 记忆系统 v7.3（显存优先）
 ================================================
 显存预估:
-  z float16 [5000,384] ≈ 3.7MB + coherence float16 [5000] 10KB
+  z float16 [5000,768] ≈ 7.3MB + coherence float16 [5000] 10KB
   + activation int16 [5000] 10KB ≈ 3.9MB（常驻 GPU, 与规格 §二.3 一致）
 内存预估: 内容字符串 5000 × ~0.5KB ≈ 2.5MB RAM + 归档池（磁盘保留, 不加载全部）≈ 5MB
 
@@ -114,7 +114,7 @@ class MemoryPool:
         self.log.info("[MEMORY] 载入 %d 条 → 驻留 Top-%d, 归档池 %d 条",
                       len(raw), len(keep), len(self._archived))
 
-        # 预分配 max_count 行（规格 §二.3: [5000,384]≈3.7MB 恒驻留）;
+        # 预分配 max_count 行（规格 §二.3: [5000,768]≈7.3MB 恒驻留）;
         # 实际使用 _n 行, 追加/替换均为原地写入（零复制, 无 torch.cat 全量拷贝）。
         self._z = torch.zeros(self.max_count, self.cfg.z_dim, dtype=torch.float16)
         self._coherence = torch.zeros(self.max_count, dtype=torch.float16)
